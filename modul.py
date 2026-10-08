@@ -20,7 +20,7 @@ email=''
 load_dotenv()
 
 # سطر الاختبار (هيطبع المفتاح في التيرمينال عشان نتأكد إنه اشتغل)
-print("MY API KEY IS:", os.getenv("GEMINI_API_KEY"))
+
 
 app = FastAPI()
 
@@ -138,9 +138,14 @@ def craete_token(data:dict):
 
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://electro-frontend-khaki.vercel.app",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -1,4 +1,12 @@
+node_modules/
+.next/
 .env
+.env.local
+.env.*.local
+
 __pycache__/
 *.db
 *.pyc
+
+public/*.msi
+public/*.exe
