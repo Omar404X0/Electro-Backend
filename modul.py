@@ -34,7 +34,11 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 print("GEMINI KEY LOADED:", bool(os.getenv("GEMINI_API_KEY")))
 
 # موديل أساسي + fallback
-MODELS = ["gemini-3.8-flash", "gemini-flash-latest"]
+MODELS = [  "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",]
 
 # ===== JWT =====
 Algorithm = 'HS256'
@@ -95,7 +99,7 @@ async def ai_assistant(request: PromptRequest):
             role = "user" if item.sender == "user" else "model"
             history.append((role, item.text))
 
-        # لازم الـ history تبدأ برسالة user، فنشيل أي رسائل model في الأول (زي الترحيب)
+        
         while history and history[0][0] == "model":
             history.pop(0)
 
