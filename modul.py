@@ -1,34 +1,53 @@
-from fastapi import FastAPI ,HTTPException
-from pydantic import BaseModel
-from main import Prodacts , session ,Users,pwd_con,Cart,Orders
-from jose import jwt
-from datetime import datetime ,timedelta
-
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import os
-from dotenv import load_dotenv
-import google.generativeai as genai
-from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime, timedelta
 from typing import List, Optional
-import re
-import secrets
 
-email=''
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from jose import jwt
+from pydantic import BaseModel
 
-# 1. تحميل ملف الـ .env أولاً وقبل أي استخدام للـ os.getenv
+from google import genai
+from google.genai import types
+
+from main import Prodacts, session, Users, pwd_con, Cart, Orders
+
+
 load_dotenv()
-
-# سطر الاختبار (هيطبع المفتاح في التيرمينال عشان نتأكد إنه اشتغل)
-
 
 app = FastAPI()
 
-# 2. إعداد مفتاح جيميني
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# ===== CORS =====
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://electro-frontend-khaki.vercel.app",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ===== Gemini client =====
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+print("GEMINI KEY LOADED:", bool(os.getenv("GEMINI_API_KEY")))
+
+# موديل أساسي + fallback
+MODELS = ["gemini-3.8-flash", "gemini-flash-latest"]
+
+# ===== JWT =====
+Algorithm = 'HS256'
+Security_key = 'kdjksjdofhsndislasn@ahhsh!kjkjs*nandns%jskdkjksj00MNjasjdjkjasdjkwjsk@!ssckkasdhskdd**jskjkljdjskld)asdknknslkncnscn'
 
 
-# ===== Schemas =====
+def craete_token(data: dict):
+    copy_data = data.copy()
+    end_time = datetime.utcnow() + timedelta(hours=1)
+    copy_data.update({'exp': end_time})
+    return jwt.encode(copy_data, Security_key, algorithm=Algorithm)
+
+
 class MessageItem(BaseModel):
     sender: str
     text: str
@@ -37,10 +56,6 @@ class MessageItem(BaseModel):
 class PromptRequest(BaseModel):
     message: str
     history: Optional[List[MessageItem]] = []
-
-
-# موديل أساسي + fallback
-MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"]
 
 
 @app.post("/products/ai")
@@ -75,41 +90,41 @@ async def ai_assistant(request: PromptRequest):
 لو حد سأل مين عمل الموقع أو المتجر أو الـ AI: المطور هو عمر الملاح (Omar El-Mallah)، مطور ويب وMachine Learning عنده 20 سنة، وعمل المشروع كله لوحده. اذكر الرابط بتاعه: {github_url}"""
 
         # تجهيز الـ history
-        formatted_history = []
+        history = []
         for item in request.history or []:
             role = "user" if item.sender == "user" else "model"
-            formatted_history.append({"role": role, "parts": [{"text": item.text}]})
+            history.append((role, item.text))
 
-        # Gemini لازم الـ history تبدأ برسالة user، فنشيل أي رسائل model في الأول (زي الترحيب)
-        while formatted_history and formatted_history[0]["role"] == "model":
-            formatted_history.pop(0)
+        # لازم الـ history تبدأ برسالة user، فنشيل أي رسائل model في الأول (زي الترحيب)
+        while history and history[0][0] == "model":
+            history.pop(0)
 
-        last_error = None
+        contents = [
+            types.Content(role=role, parts=[types.Part(text=text)])
+            for role, text in history
+        ]
+        contents.append(types.Content(role="user", parts=[types.Part(text=request.message)]))
+
+        errors = []
         for model_name in MODELS:
             try:
-                model = genai.GenerativeModel(
-                    model_name=model_name,
-                    system_instruction=system_instruction,
-                    generation_config={
-                        "temperature": 0.7,
-                        "max_output_tokens": 400,
-                    },
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.7,
+                        max_output_tokens=2000,
+                    ),
                 )
-
-                chat = model.start_chat(history=formatted_history)
-                response = await chat.send_message_async(
-                    request.message,
-                    request_options={"timeout": 30.0},
-                )
-
-                if response and response.text:
+                if response.text:
                     return {"reply": response.text.strip()}
-
+                errors.append(f"{model_name}: empty response")
             except Exception as e:
-                last_error = str(e)
-                continue
+                errors.append(f"{model_name}: {e}")
+                print("MODEL ERROR ->", model_name, e)
 
-        raise HTTPException(status_code=500, detail=f"All models failed. Last error: {last_error}")
+        raise HTTPException(status_code=500, detail=" | ".join(errors))
 
     except HTTPException:
         raise
@@ -119,71 +134,40 @@ async def ai_assistant(request: PromptRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-    
-Algorithm = 'HS256'
-
-Security_key ='kdjksjdofhsndislasn@ahhsh!kjkjs*nandns%jskdkjksj00MNjasjdjkjasdjkwjsk@!ssckkasdhskdd**jskjkljdjskld)asdknknslkncnscn'
-
-
-
-
-
-def craete_token(data:dict):
-    copy_data= data.copy()
-    end_time= datetime.utcnow() + timedelta(hours=1)
-    copy_data.update({'exp':end_time})
-    return jwt.encode(copy_data,Security_key,algorithm=Algorithm)
-
-
-
-
-
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://electro-frontend-khaki.vercel.app",
-    ],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# ===================================================================
+#                              Auth
+# ===================================================================
 class User_log(BaseModel):
-    
-    emil:str
-    password:str
+    emil: str
+    password: str
+
+
 class User_s(BaseModel):
-    
-    emil:str
-    password:str
-    name:str
-
-
+    emil: str
+    password: str
+    name: str
 
 
 @app.post('/signup')
 async def sign(user: User_s):
     existing = session.query(Users).filter(Users.emil == user.emil).first()
     if existing:
-        
-        return False  
+        return False
 
     new_user = Users(
         emil=user.emil,
         password=pwd_con.hash(user.password),
         name=user.name
-        
     )
     session.add(new_user)
     session.commit()
-    
-    token = craete_token({'user_id' : new_user.id})
+
+    token = craete_token({'user_id': new_user.id})
     return {
-               'token' : token
-               ,'is_admin' : new_user.is_admin
-            }
+        'token': token,
+        'is_admin': new_user.is_admin
+    }
+
 
 @app.post('/login')
 async def log(user: User_log):
@@ -195,77 +179,62 @@ async def log(user: User_log):
         return False
 
     if pwd_con.verify(user.password, result.password):
-        token = craete_token({'user_id' : result.id})
+        token = craete_token({'user_id': result.id})
         return {
-            'token' : token
-            ,'is_admin' : result.is_admin
-            }
+            'token': token,
+            'is_admin': result.is_admin
+        }
     else:
         return False
 
-# @app.post(/login)
 
-
+# ===================================================================
+#                              Products
+# ===================================================================
 @app.get('/prodacts')
-async def  get_pro() :
-    res= []
+async def get_pro():
+    res = []
     pro = session.query(Prodacts).all()
-    for p  in pro :
+    for p in pro:
         res.append({
-            'id' : p.id,
-            'name' : p.name,
-            'con' : p.contity,
+            'id': p.id,
+            'name': p.name,
+            'con': p.contity,
             'price': p.price,
-            'stat' : p.stats,
+            'stat': p.stats,
             'imgs': [img.img_path for img in p.img]
-
-
-
-
-
-
         })
     return res
 
 
-class orderReq (BaseModel) :
-    pro_id :int
-    token:str
+class orderReq(BaseModel):
+    pro_id: int
+    token: str
 
 
-@app.post('/prodacts/order') 
-async def buy_pro(order : orderReq)  :
-
-
+@app.post('/prodacts/order')
+async def buy_pro(order: orderReq):
     pro = session.query(Prodacts).filter(
         Prodacts.id == order.pro_id,
-        Prodacts.contity > 0 
+        Prodacts.contity > 0
+    ).update({Prodacts.contity: Prodacts.contity - 1})
 
+    if pro == 0:
+        return False
 
+    payload = jwt.decode(order.token, Security_key, algorithms=[Algorithm])
+    user_id = payload.get("user_id")
 
-    ).update({Prodacts.contity: Prodacts.contity -1})
-
-    if pro ==  0 :
-            return False
-        
-    payload=jwt.decode(order.token,Security_key,algorithms=Algorithm)
-    user_id= payload.get("user_id")
-    
     pro_owen = session.query(Prodacts).filter(
         Prodacts.id == order.pro_id,
-        
-
-
-
     ).first()
 
-    user= session.query(Users).filter(
-        Users.id== user_id
-
+    user = session.query(Users).filter(
+        Users.id == user_id
     ).first()
 
-    new_order= Orders(
-        user_id= user.id,
+    new_order = Orders(
+        user_id=user.id,
         pro_id=pro_owen.id
     )
 
@@ -273,15 +242,83 @@ async def buy_pro(order : orderReq)  :
     session.commit()
     return True
 
-  
 
-class Cart_type(BaseModel) :
-    pro_id:int
-    token:str
-    quantity:int
-  
-    
-    
+# ===================================================================
+#                              Cart
+# ===================================================================
+class Cart_type(BaseModel):
+    pro_id: int
+    token: str
+    quantity: int
+
+
+@app.post('/prodacts/cart')
+async def add_to_car(cart: Cart_type):
+    payload = jwt.decode(cart.token, Security_key, algorithms=[Algorithm])
+    user_id_from_token = payload.get('user_id')
+
+    new_cart_pro = Cart(
+        pro_id=cart.pro_id,
+        user_id=user_id_from_token,
+        quantity=cart.quantity,
+    )
+
+    session.add(new_cart_pro)
+    session.commit()
+    return True
+
+
+@app.get('/cart')
+async def cart_fun(token: str):
+    try:
+        payload = jwt.decode(token, Security_key, algorithms=[Algorithm])
+        user_id = payload.get('user_id')
+        all_pro = []
+        one_pro = session.query(Cart).filter(Cart.user_id == user_id).all()
+        for item in one_pro:
+            all_pro.append({
+                'id': item.id,
+                'user_id': item.user_id,
+                'pro_id': item.pro_id,
+                'name': item.pro.name,
+                'img': item.pro.img[0].img_path if item.pro.img else None,
+                'price': item.pro.price,
+                'quantity': item.quantity
+            })
+        return all_pro
+    except Exception as e:
+        session.rollback()
+        return {"error": str(e)}
+
+
+class remove_item(BaseModel):
+    id: int
+    token: str
+
+
+@app.post('/cart/remove')
+async def remove_from_cart(item_remove: remove_item):
+    try:
+        payload = jwt.decode(item_remove.token, Security_key, algorithms=[Algorithm])
+        user_id = payload.get('user_id')
+
+        item = session.query(Cart).filter(
+            Cart.id == item_remove.id,
+            Cart.user_id == user_id
+        ).first()
+
+        if item:
+            session.delete(item)
+            session.commit()
+            return {"message": "Item Deleted Successfully"}
+
+        return {"message": "Item not found"}
+
+    except Exception as e:
+        session.rollback()
+        return {"error": str(e)}
+
+
 class CheckoutItem(BaseModel):
     id: int          # id بتاع صف الكارت
     quantity: int    # الكمية اللي اليوزر اختارها
@@ -338,89 +375,9 @@ async def checkout(req: CheckoutReq):
         return {"error": str(e)}
 
 
-
-    
-@app.post('/prodacts/cart')
-async def  add_to_car(cart:Cart_type):
-        payload= jwt.decode(cart.token,Security_key,algorithms=Algorithm)
-        user_id_from_token= payload.get('user_id')
-        
-        new_cart_pro = Cart(
-            pro_id= cart.pro_id,
-            user_id= user_id_from_token,
-            quantity= cart.quantity,
-
-        )
-
-        session.add(new_cart_pro) 
-        session.commit()
-        return True
-        
-
-@app.get('/cart')
-async def cart_fun(token:str):
-    try:
-        payload =jwt.decode(token,Security_key,algorithms=Algorithm)
-        user_id= payload.get('user_id')
-        all_pro = []
-        one_pro = session.query(Cart).filter(Cart.user_id==user_id).all()
-        for item in one_pro:
-            all_pro.append({
-                'id': item.id,
-                'user_id': item.user_id,
-                'pro_id': item.pro_id,
-                'name': item.pro.name,
-                'img': item.pro.img[0].img_path if item.pro.img else None,
-                'price': item.pro.price,
-                'quantity': item.quantity
-            })
-        return all_pro
-    except Exception as e:
-        
-        session.rollback()
-        return {"error": str(e)}
-
-class  remove_item (BaseModel) :
-    pro_id:int
-    
-    token:str
-
-
-
-class remove_item(BaseModel):
-    id: int  
-    token: str
-
-@app.post('/cart/remove')
-async def remove_from_cart(item_remove: remove_item):
-    try:
-        
-        payload = jwt.decode(item_remove.token, Security_key, algorithms=[Algorithm])
-        user_id = payload.get('user_id') 
-
-        #
-        item = session.query(Cart).filter(
-            Cart.id == item_remove.id,
-            Cart.user_id == user_id
-        ).first()
-
-        if item:
-            session.delete(item)
-            session.commit()
-            return {"message": "Item Deleted Successfully"}
-            
-        return {"message": "Item not found"}
-        
-    except Exception as e:
-        session.rollback()
-        return {"error": str(e)}
-
-
-
-
-
-
-
+# ===================================================================
+#                              Admin
+# ===================================================================
 def check_admin(token: str):
     payload = jwt.decode(token, Security_key, algorithms=[Algorithm])
     user_id = payload.get('user_id')
@@ -428,7 +385,6 @@ def check_admin(token: str):
     if not user or not user.is_admin:
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
-
 
 
 class AdminTokenReq(BaseModel):
@@ -576,12 +532,31 @@ async def admin_delete_product(req: DeleteProductReq):
         session.rollback()
         return {"error": str(e)}
 
+
+@app.get('/admin/orders')
+async def getData():
+    list_of_orders = []
+    orders = session.query(Orders).all()
+    for order in orders:
+        list_of_orders.append({
+            'id': order.id,
+            'customer': order.user.name,
+            'product': order.pro.name,
+            'qty': 1,
+            'status': 'Delivered'
+        })
+    return list_of_orders
+
+
+# ===================================================================
+#                              Purchases
+# ===================================================================
 @app.get('/purchases')
-async def deels_page(token:str) :
-    deels_list=[]
-    payload= jwt.decode(token,Security_key,algorithms=Algorithm)
-    user_id= payload.get('user_id')
-    items =  session.query(Orders).filter(Orders.user_id == user_id).all()
+async def deels_page(token: str):
+    deels_list = []
+    payload = jwt.decode(token, Security_key, algorithms=[Algorithm])
+    user_id = payload.get('user_id')
+    items = session.query(Orders).filter(Orders.user_id == user_id).all()
     for item in items:
         deels_list.append({
             'id': item.id,
@@ -591,78 +566,41 @@ async def deels_page(token:str) :
             'img': item.pro.img[0].img_path if item.pro.img else None,
             'price': item.pro.price,
             'quantity': getattr(item, 'quantity', 1)
-
-
-
         })
 
     return deels_list
 
 
-
-
-class forget_emil (BaseModel) :
+# ===================================================================
+#                              Forget password
+# ===================================================================
+class forget_emil(BaseModel):
     emil: str
 
 
-
 @app.post('/forget')
-async def forget(mail:forget_emil) :
-   res = session.query(Users).filter(Users.emil == mail.emil).first()
-   if res :
-       email = mail.emil
-       return True
-   else :
-       return False
+async def forget(mail: forget_emil):
+    res = session.query(Users).filter(Users.emil == mail.emil).first()
+    if res:
+        return True
+    else:
+        return False
 
-class passwords(BaseModel) :
-    passord:str
-    emil:str
+
+class passwords(BaseModel):
+    passord: str
+    emil: str
+
 
 @app.post('/forget/reset')
-async def forget(user:passwords) :
-        hashed_pass =pwd_con.hash(user.passord)
-    
-        update_pass = session.query(Users).filter(Users.emil == user.emil).update({Users.password : hashed_pass})
+async def forget_reset(user: passwords):
+    hashed_pass = pwd_con.hash(user.passord)
 
-        session.commit()
+    update_pass = session.query(Users).filter(Users.emil == user.emil).update({Users.password: hashed_pass})
 
-        if update_pass > 0:
-            return {"success": True, "message": "Password updated successfully"}
-        else:
-            return {"success": False, "message": "User not found"}
+    session.commit()
 
-
-
-class OrderType(BaseModel):
-    id:int
-    customer:str
-    product:str
-    qty:int
-    status:str
-
-
-
-@app.get('/admin/orders')
-async def getData() : 
-    list_of_orders = []
-    orders = session.query(Orders).all()
-    for order in orders:
-        list_of_orders.append({
-            'id' : order.id,
-            'customer':order.user.name,
-            'product':order.pro.name,
-            'qty':1,
-            'status': 'Delivered'
-
-
-
-
-        })
-
-
-    return list_of_orders
-
-
-
-
+    if update_pass > 0:
+        return {"success": True, "message": "Password updated successfully"}
+    else:
+        return {"success": False, "message": "User not found"}
