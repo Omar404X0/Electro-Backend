@@ -106,15 +106,41 @@ def pass_inc():
     session.add(admin)
     session.commit()
     
-if __name__ == "__main__":
+def seed_database():
+    # لو فيه منتجات بالفعل، يبقى الداتابيز اتعملها seed قبل كده
+    if session.query(Prodacts).count() > 0:
+        return
+
+    # إضافة المنتجات
     for p in list_of_prodacts:
         new_product = Prodacts(**p)
         session.add(new_product)
-        session.flush() 
+        session.flush()
 
+        # إضافة صور كل منتج
         images_paths = product_images_map.get(p["name"], [])
+
         for path in images_paths:
-            new_img = Imgs(img_path=path, pro=new_product)
+            new_img = Imgs(
+                img_path=path,
+                pro=new_product
+            )
             session.add(new_img)
 
-    pass_inc()
+    # إضافة الـ Admin
+    password_d = pwd_con.hash('1234')
+
+    admin = Users(
+        name='Omar Elmallah',
+        emil='o24@gmail.com',
+        password=password_d,
+        is_admin=True
+    )
+
+    session.add(admin)
+
+
+    session.commit()
+
+
+seed_database()
