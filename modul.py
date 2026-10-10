@@ -18,6 +18,9 @@ load_dotenv()
 
 app = FastAPI()
 
+
+Security_key= os.getenv("Security_key")
+
 # ===== CORS =====
 app.add_middleware(
     CORSMiddleware,
@@ -42,7 +45,7 @@ MODELS = [  "gemini-3.8-flash",
 
 # ===== JWT =====
 Algorithm = 'HS256'
-Security_key = 'kdjksjdofhsndislasn@ahhsh!kjkjs*nandns%jskdkjksj00MNjasjdjkjasdjkwjsk@!ssckkasdhskdd**jskjkljdjskld)asdknknslkncnscn'
+
 
 
 def craete_token(data: dict):
@@ -539,6 +542,7 @@ async def admin_delete_product(req: DeleteProductReq):
 
 @app.get('/admin/orders')
 async def getData():
+    
     list_of_orders = []
     orders = session.query(Orders).all()
     for order in orders:
